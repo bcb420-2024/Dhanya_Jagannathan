@@ -1,0 +1,48 @@
+---
+title: "docker_gene_exp"
+output: html_document
+date: "2024-01-19"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Importing libraries
+```{r}
+library("DESeq2")
+library("pheatmap")
+```
+
+## Differential Expression Analysis
+
+```{r}
+random_mat <- matrix(sample(1:100, 5 * 10, replace = TRUE), nrow = 5)
+
+# Column and row names
+colnames(random_mat) <- c("cond1", "cond2", "cond3", "cond4", "cond5", "ctrl1", "ctrl2", "ctrl3", "ctrl4", "ctrl5")
+rownames(random_mat) <- c("gene1", "gene2", "gene3", "gene4", "gene5")
+
+# Print the random matrix
+print(data_matrix)
+
+```
+```{r}
+
+#function for fold change 
+calculate_fold <- function(data_matrix) {
+  cond_cols <- grep("^cond", colnames(data_matrix))
+  ctrl_cols <- grep("^ctrl", colnames(data_matrix))
+  
+  fold_change <- data_matrix[, cond_cols] / data_matrix[, ctrl_cols]
+  
+  return(fold_change)
+}
+
+# Compute 
+fold_change_matrix <- calculate_fold(data_matrix)
+
+# Print the fold change matrix
+print(fold_change_matrix)
+```
+
