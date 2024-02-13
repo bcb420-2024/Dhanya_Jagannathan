@@ -12,4 +12,4 @@ You can also find me on my [linkedin](https://www.linkedin.com/in/dhanya-j-80182
 You can find my wiki [here](https://github.com/bcb420-2024/Dhanya_Jagannathan/wiki), where I keep all of my journal entries. 
 
 ## Assignments
-[Assignment 1- Dataset Selection + Initial Processing](https://github.com/bcb420-2024/Dhanya_Jagannathan/blob/main/A1_DhanyaJagannathan.html)
+[Assignment 1: Dataset Selection + Initial Processing](https://github.com/bcb420-2024/Dhanya_Jagannathan/blob/main/A1_DhanyaJagannathan.html)
