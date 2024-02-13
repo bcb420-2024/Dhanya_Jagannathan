@@ -1,0 +1,350 @@
+---
+title: "BCB420 Assignment 1: Dataset Selection + Initial Processing"
+output: html_notebook
+---
+## By Dhanya Jagannathan 
+
+This is a reproducible RNotebook that entails the selection and initial processing of a gene expression dataset from an RNAseq experiment. More specifically, this notebook will (1) analyse information about the dataset I have chosen, and its associated publication, (2) map the expression data to HUGO gene symbols, (3) filter out unncecessary genes, and (4) normalize the dataset for downstream assignments that may potentially involve differential expression and pathway analyses. Note: sentences that are in **bold** answer the necessary questions from the assignment instructions. 
+
+
+### Installing and Loading Packages
+In the code block below, we install and load the necessary packages needed for the rest of the notebook. 
+```{r}
+
+#install BiocManager package 
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+#install GEOquery
+if (!requireNamespace("GEOquery", quietly = TRUE))
+    BiocManager::install("GEOquery")
+
+#install knitr
+if (!requireNamespace("knitr", quietly = TRUE))
+    install.packages("knitr")
+
+#install edgeR
+if (!requireNamespace("edgeR", quietly = TRUE))
+    BiocManager::install("edgeR")
+
+#load up all of the libraries
+library(GEOquery)
+library(knitr)
+library(biomaRt)
+library(edgeR)
+
+```
+
+### Dataset Background Information
+The expression dataset that I have selected is [GSE221253](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE221253), taken from the GEO expression data repository. The study associated with this dataset involved adoptive cell therapy. Adoptive cell therapy via tumor infiltrating lymphocytes (ACT-TIL) is a type of immunotherapy used to treat cancer. This [study](https://www.science.org/doi/10.1126/sciimmunol.adg7995) took samples from 13 patients having metastatic melanoma and performed RNAseq analysis, along with other analyses like spatial proteomics and scRNAseq, on tumor tissues before and after the cell therapy (pre- and post-ACT) in order to gain a better understanding of the interactions and cell states within the tumor microenvironment throughout treatment. **For the RNAseq experiment, this resulted in a total of 26 samples, and 13 in each condition** (two for each patient, and the experimental conditions being pre- and post-ACT treatment). **I decided to choose this dataset because I am really interested in cell and gene therapies as well as synthetic biology. The field of editing cells ex-vivo, to cure various diseases is very interesting to me.** The code block below gets and prints the summary information of my selected dataset. 
+
+```{r}
+#assign the dataset accession number to a variable for easy access. 
+dataSetId <- "GSE221253"
+
+#get dataset information from GEO, and display just the GEO description of the dataset. 
+dataInfo <- getGEO(dataSetId, GSEMatrix = FALSE)
+dataInfo@header$summary
+
+```
+
+<br>
+<br>
+Sometimes, we may even find information about the data and how it was processed. In the below code block, is some data processing information for the first sample in the list of samples used in this experiment. Usually, all the other samples in the experiment would entail the same processing steps as below. 
+It is important to note that according to the below data processing information, the supplementary data file contains raw counts at the gene level, and that the counts have been mapped with HUGO Gene Symbols using the biomaRt package- this information may come in handy later on in this notebook when we attempt to map the expression data to HUGO Gene Symbols. 
+```{r}
+dataInfo@gsms[[1]]@header$data_processing
+```
+
+
+
+### Information on Dataset Samples 
+Now that we have an understanding of the dataset and the associated experiment, it is helpful to have information about each of our samples nice and handy in a table. Sample information involves the sample accession ID, the ID of the patient it came from, tissue it was taken from, and whether it was taken pre- or post- ACT treatment. The below code block consolidates all of this information, and the code block after cleans up and formats this information into a nice table to view in html format (third code block). 
+```{r}
+# Consolidation of sample information
+sampleList <- dataInfo@gsms
+
+samplesInfo <- do.call(rbind,
+                        lapply(sampleList, 
+                               FUN=function(x){
+                                 c(x@header$title, 
+                                   x@header$characteristics_ch1[1],
+                                   x@header$characteristics_ch1[3])
+                               }))
+```
+
+```{r}
+
+#Neatly format above data. 
+colnames(samplesInfo) <- c("title", "tissue", "time")
+samplesInfo[,'tissue'] <- gsub(samplesInfo[,'tissue'],
+                                pattern = "tissue: ", 
+                                replacement = "")
+samplesInfo[,'time'] <- gsub(samplesInfo[,'time'],
+                                pattern = "time: ", 
+                                replacement = "")
+
+
+```
+
+<br>
+<br>
+From the snippet of the sample data below (for the first five samples), we are able to visualize the two different conditions mentioned at the beginnings of this rnotebook: each patient constitutes two samples (one taken at pre-ACT, and another taken after ACT). This table also show additional sample information like what kind of tissue the samples came from. All the information in each of the columns is pretty self explanatory, so no additional information digging was needed in this case to fill up any data plotholes.**This experiment contains 13 biological replicates (13 patients). I am also not quite sure whether there are technical replicates associated with this experiment, and don't know how to handle that quite yet**
+```{r}
+kable(samplesInfo[1:5,], format = "html")
+```
+
+
+
+### Downloading the Data
+Now that we have thoroughly analysed the sample information, we need to actually obtain the gene expression counts data. We first look at what supplementary files exist associated with the experiment. 
+There is only one data file associated with this experiment, and from the previous code block where we displayed data processing information, it mentioned "Supplementary files format and content: Processed coding gene expression raw count with Gene Symbol mapping" which seems to be exactly the file we need. 
+However, we need to verify this just in case and make sure that this file contains ALL gene counts, and not just a small subset. The code block below just displays the file name, and the subsequent blocks actually download this data text file, and verify that this is indeed the correct data file. 
+```{r}
+supplementary_files = getGEOSuppFiles(dataSetId, fetch_files = FALSE)
+supplementary_files[[1]] 
+```
+<br>
+<br>
+Rather than re-downloading the gene counts data file everytime this notebook is run, we only download it when necessary. To do this, we go through all of the supplementary data files available, and apply a function to each of them that determines whether they exist in the directory (provided path) or not. Only the files that are not present in our specified directory are stored in 'missing_files', and thus downloaded. 
+```{r}
+
+
+# store the path you want to download the data file in, in a variable. 
+directory <- file.path(getwd())
+
+missing <- supplementary_files[[1]][!unlist(
+  lapply(supplementary_files[[1]], FUN=function(x) {
+    file.exists(
+      file.path(directory, dataSetId, x)
+    )
+  })
+)]
+
+# download the missing supplementary file
+if(length(missing) == 1) {
+  #get supp file
+  supp_files = getGEOSuppFiles(dataSetId, 
+                            filter_regex = missing[1], 
+                            baseDir = directory, 
+                            fetch_files = TRUE)
+}
+
+
+```
+<br>
+<br>
+Here, we read in the raw gene counts file, and verify that it is indeed the correct file, since it has ~20000 genes and 26 samples (13 pre-ACT and 13 post-ACT), which is what we expect. 
+```{r}
+
+#read in the downloaded data into a table, ACT_vs_baseline. 
+ACT_vs_baseline <- read.table(
+  file.path(directory, dataSetId, supplementary_files[[1]]),
+           header=TRUE, 
+           check.names=TRUE
+)
+dim(ACT_vs_baseline)
+```
+
+<br>
+<br>
+We also ensure that all of the genes and samples are unique and there are no null values for genes
+```{r}
+#unique samples!
+length(unique(colnames(ACT_vs_baseline))) == 26
+
+#unique genes!
+length(unique(rownames(ACT_vs_baseline))) == 19117
+
+#no null rows names!
+length(!is.na(rownames(ACT_vs_baseline))) == 19117
+```
+<br>
+<br>
+Here, we visualize the downloaded gene counts data table, for a small subset of the data (5 genes and 2 samples from one patient). 
+```{r}
+#Visualize subset of the data. 
+#data makes perfect sense! Thanks authors!
+ACT_vs_baseline[1:5, 1:2]
+```
+
+
+
+### Mapping to HUGO Gene Symbols
+According to the output of one of the previous code blocks above in the "Dataset Background Information" section, as well as by just inspecting the above subset of data, our gene expression data has already been mapped to HUGO symbols. However, it still may be of interest to re-map the rownames to HUGO symbols ourselves to see if there are any rows in our data that cannot be mapped to HUGO gene symbols. The following code blocks connect to bioMart, and create a conversion file for mapping our current gene symbols to HUGO gene symbols. 
+```{r}
+#connect to mart + use the human dataset.
+ensembl <- useMart("ensembl")
+ensembl = useDataset("hsapiens_gene_ensembl", mart=ensembl)
+
+```
+
+
+```{r}
+convertIds <- rownames(ACT_vs_baseline)
+
+#check to see if conversion file exists, if not, create it. 
+conversion_stash <- "id_conversion.rds"
+if(file.exists(conversion_stash)) {
+  id_conversion <- readRDS(conversion_stash)
+} else {
+  # attributes refers to: what identifier type we want (in this case "hgnc_symbol")
+  # filters refers to: what we will filter results by, which is just "hgnc_symbol"
+  # values refers to: "hgnc_symbol" (What we have as rownames so far)
+  id_conversion <- getBM(attributes = c("hgnc_symbol"), 
+                         filters = c("hgnc_symbol"), 
+                         values = convertIds, 
+                         mart = ensembl)
+  saveRDS(id_conversion, conversion_stash)
+}
+
+
+```
+<br>
+<br>
+Here, we output statistics: (1) the number of genes from our original gene counts table that were mapped to actual HUGO symbols, (2) How many genes did we begin with in our original table, and (3) The difference between (1) and (2). From these results, **we see that 940 genes from our original gene expression table were unable to be mapped to HUGO gene symbols.** This is actually not that bad! In addition, **there does not seem to be expression values that were not unique for specific genes**. 
+```{r}
+
+#how many genes from our original gene symbol rownames were mapped to actual HUGO symbols? 
+length(which(rownames(ACT_vs_baseline) %in%
+               id_conversion$hgnc_symbol))
+
+#Out of our total genes that we started with: 
+nrow(ACT_vs_baseline)
+
+# Calculate the difference between the number of rows originally and then number of rownames that were able to be mapped to HUGO symbols. 
+differenceMap <- nrow(ACT_vs_baseline) - length(which(rownames(ACT_vs_baseline) %in% id_conversion$hgnc_symbol))
+
+differenceMap
+```
+
+<br>
+<br>
+This code block just shows the first 10 gene names (from the 940 count above) that were unable to be mapped to HUGO gene symbols. 
+```{r}
+rownames(ACT_vs_baseline)[!(rownames(ACT_vs_baseline) %in% id_conversion$hgnc_symbol)][1:10]
+```
+<br>
+<br>
+In this code block here, I decided to merge both the id_conversion data frame (with the actual HUGO gene symbols) and the original ACT_vs_baseline gene expression data frame. The resulting dataframe still keeps the rows that were unable to be mapped to HUGO gene symbols, since these genes could potentially constitute an uncharacterized signal later on in the rest of the assignments (when performing Differential Expression and Pathway analyses). 
+```{r}
+ACT_vs_baseline_annot <- merge(id_conversion, ACT_vs_baseline, by.x = 1, by.y = 0, all.y = TRUE)
+
+rownames(ACT_vs_baseline_annot) <- ACT_vs_baseline_annot$hgnc_symbol
+ACT_vs_baseline_annot <- ACT_vs_baseline_annot[-c(1)]
+
+# our current gene counts data table (with mapping completed)
+ACT_vs_baseline_annot[1:10, 1:2]
+
+
+```
+### Dataset Filteration and Normalization 
+Now that we have the gene expression counts table with HUGO gene symbol mappings, the next step is to filter out the genes with low counts and normalize our data. Filtering ensures that there is less noise in the data, and statistical calculations are less computationally intensive down the line (since we will have less genes). Sample based normalization ensures to adjust for variations in the data and also allows for between sample comparisons. The first code block outputs a density plot of the gene expression data BEFORE filtration and normalization. 
+The next couple of code blocks after, filters out the genes with low counts, and performs TMM normalization. 
+
+```{r}
+# density graph pre filtering + pre normalization
+counts_density <- apply(log2(ACT_vs_baseline_annot), 2, density)
+xlim <- 0; ylim <- 0
+for (i in 1:length(counts_density)) {
+  xlim <- range(c(xlim, counts_density[[i]]$x));
+  ylim <- range(c(ylim, counts_density[[i]]$y))
+}
+
+cols <- (length(counts_density))
+ltys <- rep(1, length(counts_density))
+
+#plot 
+plot(counts_density[[1]], xlim=xlim, ylim=ylim, type="n", 
+     ylab="Smoothing density of log2-CPM", 
+     main="", cex.lab = 0.85)
+
+for(i in 1:length(counts_density))
+  lines(counts_density[[i]], cols=cols[i], lty=ltys[i])
+
+```
+
+**We see here that the filteration of outlier genes with low gene counts, removed 3678 genes from our expression dataset**
+```{r}
+
+# set the minimum number of samples
+min_samples <- 3
+
+data_as_matrix <- as.matrix(ACT_vs_baseline_annot)
+
+# Filter out low counts
+keep <- rowSums(cpm(data_as_matrix) > 1) >= min_samples
+data_filtered <- data_as_matrix[keep,]
+nrow(data_filtered)
+
+#Total number of genes removed: 
+nrow(ACT_vs_baseline_annot) - nrow(data_filtered)
+```
+
+```{r}
+
+# TMM Normalization 
+dge_list = DGEList(counts = data_filtered)
+dge_list = calcNormFactors(dge_list)
+normalized_counts <- cpm(dge_list)
+normalized_counts <- as.data.frame(normalized_counts)
+
+normalized_counts
+
+
+```
+<br>
+<br>
+This code block outputs a density plot of the gene expression data after filtration and normalization. Comparing the two plots (pre- and post- filteration + normalization), shows the changes in the data, uniform and less noisy. 
+```{r}
+#post-filtering + post normalization: 
+
+counts_density <- apply(log2(normalized_counts), 2, density)
+xlim <- 0; ylim <- 0
+for (i in 1:length(counts_density)) {
+  xlim <- range(c(xlim, counts_density[[i]]$x));
+  ylim <- range(c(ylim, counts_density[[i]]$y))
+}
+
+cols <- (length(counts_density))
+ltys <- rep(1, length(counts_density))
+
+#plot 
+plot(counts_density[[1]], xlim=xlim, ylim=ylim, type="n", 
+     ylab="Smoothing density of log2-CPM", 
+     main="", cex.lab = 0.85)
+
+for(i in 1:length(counts_density))
+  lines(counts_density[[i]], cols=cols[i], lty=ltys[i])
+
+```
+<br>
+<br>
+The last step of this notebook is to export out our fully processed (mapped, filtered, and normalized) gene expression dataframe to a txt file for downstream use in future assignments! **In regards to the final coverage of my dataset, the end product is a dataframe with 15439 HUGO mapped genes and counts for each**
+```{r}
+write.table(normalized_counts, file.path(getwd(),"normalized_baseline_vs_TIL_counts.txt"), quote = FALSE, sep = "\t", row.names = TRUE)
+```
+
+### References
+
+  Morgan M, Ramos M (2023). _BiocManager: Access the Bioconductor Project Package
+      Repository_. R package version 1.30.22,
+      <https://CRAN.R-project.org/package=BiocManager>.
+      
+  Davis, S. and Meltzer, P. S. GEOquery: a bridge between the Gene Expression
+      Omnibus (GEO) and BioConductor. Bioinformatics, 2007, 14, 1846-1847
+      
+  Xie Y (2023). _knitr: A General-Purpose Package for Dynamic Report Generation in
+      R_. R package version 1.45, <https://yihui.org/knitr/>.
+      
+  Robinson MD, McCarthy DJ and Smyth GK (2010). edgeR: a Bioconductor package for
+      differential expression analysis of digital gene expression data. Bioinformatics
+      26, 139-140
+      
+Response to tumor-infiltrating lymphocyte adoptive therapy is associated with preexisting 
+     CD8+ T-myeloid cell ... (n.d.). <https://www.science.org/doi/10.1126/sciimmunol.adg7995> 
+  
+      
+  
+
+
