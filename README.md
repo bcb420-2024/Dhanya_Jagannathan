@@ -13,3 +13,4 @@ You can find my wiki [here](https://github.com/bcb420-2024/Dhanya_Jagannathan/wi
 
 ## Assignments
 [Assignment 1: Dataset Selection + Initial Processing](https://github.com/bcb420-2024/Dhanya_Jagannathan/blob/main/A1_DhanyaJagannathan.html)
+[Assignment 2: Differential Gene expression and Preliminary ORA](https://github.com/bcb420-2024/Dhanya_Jagannathan/blob/main/A2_DhanyaJagannathan.html) 
